@@ -17,16 +17,18 @@ describe('release desktop workflow', () => {
       '.github/workflows/release-desktop.yml',
     ]) {
       const workflow = readFileSync(workflowPath, 'utf8')
-      const buildSidecarsStep = workflow.match(
-        /- name: Build sidecars[\s\S]*?run: bun run build:sidecars/,
-      )?.[0]
+      for (const stepName of ['Build sidecars', 'Build Tauri app']) {
+        const step = workflow.match(
+          new RegExp(`- name: ${stepName}[\\s\\S]*?(?:\\n\\s{6}- name:|\\n\\s*# ──|\\n\\s*with:|$)`),
+        )?.[0]
 
-      expect(buildSidecarsStep, workflowPath).toContain(
-        'BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache',
-      )
-      expect(buildSidecarsStep, workflowPath).toContain(
-        'TAURI_ENV_TARGET_TRIPLE: ${{ matrix.rust_target }}',
-      )
+        expect(step, `${workflowPath} ${stepName}`).toContain(
+          'BUN_INSTALL_CACHE_DIR: ${{ runner.temp }}/bun-install-cache',
+        )
+        expect(step, `${workflowPath} ${stepName}`).toContain(
+          'TAURI_ENV_TARGET_TRIPLE: ${{ matrix.rust_target }}',
+        )
+      }
     }
   })
 })
