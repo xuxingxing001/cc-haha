@@ -513,6 +513,16 @@ function buildModelContextWindows(
   return windows
 }
 
+function normalizeModelMapping(models: ModelMapping): ModelMapping {
+  const main = models.main.trim()
+  return {
+    main,
+    haiku: models.haiku.trim() || main,
+    sonnet: models.sonnet.trim() || main,
+    opus: models.opus.trim() || main,
+  }
+}
+
 function updateSettingsJsonAutoCompactWindow(raw: string, value: string): string {
   try {
     const parsed = JSON.parse(raw || '{}') as { env?: Record<string, unknown> }
@@ -685,6 +695,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
         const needsProxy = apiFormat !== 'anthropic'
         const autoCompactWindowEnv = autoCompactWindow.trim()
         const modelContextWindows = buildModelContextWindows(models, modelContextInputs)
+        const normalizedModels = normalizeModelMapping(models)
         const existingEnv = (settings.env as Record<string, string>) || {}
         const cleanedEnv = stripProviderSettingsJsonEnv(existingEnv, presetDefaultEnvKeys)
         const merged = {
@@ -699,10 +710,10 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
               : {}),
             ANTHROPIC_BASE_URL: needsProxy ? 'http://127.0.0.1:3456/proxy' : baseUrl,
             ...buildSettingsJsonAuthEnv(apiFormat, authStrategy, apiKey, selectedPreset),
-            ANTHROPIC_MODEL: models.main,
-            ANTHROPIC_DEFAULT_HAIKU_MODEL: models.haiku,
-            ANTHROPIC_DEFAULT_SONNET_MODEL: models.sonnet,
-            ANTHROPIC_DEFAULT_OPUS_MODEL: models.opus,
+            ANTHROPIC_MODEL: normalizedModels.main,
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: normalizedModels.haiku,
+            ANTHROPIC_DEFAULT_SONNET_MODEL: normalizedModels.sonnet,
+            ANTHROPIC_DEFAULT_OPUS_MODEL: normalizedModels.opus,
           },
         }
         setSettingsJson(JSON.stringify(merged, null, 2))
@@ -830,7 +841,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
     setModels(nextModels)
     setModelContextInputs(nextInputs)
     setSettingsJson((current) => updateSettingsJsonModelContextWindows(
-      updateSettingsJsonModels(current, nextModels),
+      updateSettingsJsonModels(current, normalizeModelMapping(nextModels)),
       buildModelContextWindows(nextModels, nextInputs),
     ))
   }
@@ -858,6 +869,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
 
   const handleSubmit = async () => {
     if (!canSubmit) return
+    const normalizedModels = normalizeModelMapping(models)
     const parsedAutoCompactWindow = parseAutoCompactWindowInput(autoCompactWindow)
     const parsedModelContextWindows = buildModelContextWindows(models, modelContextInputs)
     setIsSubmitting(true)
@@ -882,7 +894,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
           authStrategy,
           baseUrl: baseUrl.trim(),
           apiFormat,
-          models,
+          models: normalizedModels,
           ...(parsedAutoCompactWindow !== undefined && { autoCompactWindow: parsedAutoCompactWindow }),
           ...(Object.keys(parsedModelContextWindows).length > 0 && { modelContextWindows: parsedModelContextWindows }),
           notes: notes.trim() || undefined,
@@ -893,7 +905,7 @@ function ProviderFormModal({ open, onClose, mode, provider, presets }: ProviderF
           baseUrl: baseUrl.trim(),
           authStrategy,
           apiFormat,
-          models,
+          models: normalizedModels,
           autoCompactWindow: parsedAutoCompactWindow ?? null,
           modelContextWindows: Object.keys(parsedModelContextWindows).length > 0
             ? parsedModelContextWindows
