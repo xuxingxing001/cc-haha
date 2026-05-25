@@ -26,7 +26,7 @@ import type {
   ScopedMcpServerConfig,
 } from '../../services/mcp/types.js'
 import { describeMcpConfigFilePath, ensureConfigScope } from '../../services/mcp/utils.js'
-import { enableConfigs } from '../../utils/config.js'
+import { enableConfigs, getGlobalConfig } from '../../utils/config.js'
 import { getCwd, runWithCwdOverride } from '../../utils/cwd.js'
 import { ApiError, errorResponse } from '../middleware/errorHandler.js'
 import { conversationService } from '../services/conversationService.js'
@@ -435,6 +435,16 @@ async function listServers(): Promise<Response> {
   })
 }
 
+function listProjectPathsWithPrivateMcp(): Response {
+  const projects = getGlobalConfig().projects ?? {}
+  const projectPaths = Object.entries(projects)
+    .filter(([, projectConfig]) => Object.keys(projectConfig.mcpServers ?? {}).length > 0)
+    .map(([projectPath]) => projectPath)
+    .sort((a, b) => a.localeCompare(b))
+
+  return Response.json({ projectPaths })
+}
+
 async function getServerStatus(name: string): Promise<Response> {
   const existing = await resolveServerForRuntimeAction(name)
   if (!existing) {
@@ -627,6 +637,10 @@ export async function handleMcpApi(
         : undefined
 
     return await runWithCwdOverride(resolveRequestCwd(url, body), async () => {
+      if (req.method === 'GET' && serverName === 'project-paths' && !action) {
+        return listProjectPathsWithPrivateMcp()
+      }
+
       if (req.method === 'GET' && !serverName) {
         return listServers()
       }

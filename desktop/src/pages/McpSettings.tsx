@@ -7,6 +7,8 @@ import { useTranslation } from '../i18n'
 import { useUIStore } from '../stores/uiStore'
 import { useMcpStore } from '../stores/mcpStore'
 import { useSessionStore } from '../stores/sessionStore'
+import { sessionsApi } from '../api/sessions'
+import { mcpApi } from '../api/mcp'
 import type { McpServerRecord, McpUpsertPayload, McpWritableScope } from '../types/mcp'
 
 type EditorMode =
@@ -110,6 +112,10 @@ function asWritableScope(scope: string): McpWritableScope {
 
 function scopeRequiresProject(scope: McpWritableScope) {
   return scope === 'local' || scope === 'project'
+}
+
+function serverHasProjectContext(server: Pick<McpServerRecord, 'scope' | 'projectPath'>) {
+  return (server.scope === 'local' || server.scope === 'project') && !!server.projectPath
 }
 
 function isStdioConfig(config: McpServerRecord['config']): config is Extract<McpServerRecord['config'], { type: 'stdio' }> {
@@ -393,6 +399,14 @@ function ServerRow({
           <span className="rounded-full bg-[var(--color-surface-hover)] px-2 py-1 font-medium text-[var(--color-text-secondary)]">
             {scopeLabel(server, t)}
           </span>
+          {serverHasProjectContext(server) && (
+            <span
+              className="max-w-full truncate rounded-full bg-[var(--color-surface-hover)] px-2 py-1 font-[var(--font-mono)] text-[11px] text-[var(--color-text-tertiary)]"
+              title={server.projectPath}
+            >
+              {server.projectPath}
+            </span>
+          )}
           <span className="truncate">{server.summary}</span>
         </div>
         {server.statusDetail && (
@@ -424,8 +438,9 @@ export function McpSettings() {
   const [draft, setDraft] = useState<McpDraft>(createEmptyDraft)
   const [isSaving, setIsSaving] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
-  const [busyServerName, setBusyServerName] = useState<string | null>(null)
+  const [busyServerKey, setBusyServerKey] = useState<string | null>(null)
   const [pendingDeleteServer, setPendingDeleteServer] = useState<McpServerRecord | null>(null)
+  const projectPathsForFetchRef = useRef<string[] | undefined>(undefined)
   const refreshInFlightRef = useRef(new Set<string>())
 
   const activeSession = sessions.find((session) => session.id === activeSessionId)
@@ -433,7 +448,31 @@ export function McpSettings() {
   const resolveOperationCwd = (server?: McpServerRecord) => server?.projectPath ?? currentWorkDir
 
   useEffect(() => {
-    void fetchServers(undefined, currentWorkDir)
+    let cancelled = false
+
+    Promise.all([
+      sessionsApi.getRecentProjects()
+        .then(({ projects }) => projects.map((project) => project.realPath))
+        .catch(() => []),
+      mcpApi.projectPaths()
+        .then(({ projectPaths }) => projectPaths)
+        .catch(() => []),
+    ])
+      .then(([recentProjectPaths, privateMcpProjectPaths]) => {
+        if (cancelled) return
+        const paths = [
+          currentWorkDir,
+          ...recentProjectPaths,
+          ...privateMcpProjectPaths,
+        ].filter((path): path is string => !!path)
+        const projectPathsForFetch = Array.from(new Set(paths))
+        projectPathsForFetchRef.current = projectPathsForFetch.length ? projectPathsForFetch : undefined
+        void fetchServers(projectPathsForFetchRef.current, currentWorkDir)
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [fetchServers, currentWorkDir])
 
   const groupedServers = useMemo(() => {
@@ -522,7 +561,7 @@ export function McpSettings() {
   }, [servers, refreshServerStatus, currentWorkDir])
 
   const handleToggle = async (server: McpServerRecord) => {
-    setBusyServerName(server.name)
+    setBusyServerKey(getServerIdentityKey(server))
     try {
       const updated = await toggleServer(server, resolveOperationCwd(server), activeSessionId ?? undefined)
       addToast({
@@ -535,7 +574,7 @@ export function McpSettings() {
         message: error instanceof Error ? error.message : t('settings.mcp.toast.toggleFailed'),
       })
     } finally {
-      setBusyServerName(null)
+      setBusyServerKey(null)
     }
   }
 
@@ -547,7 +586,7 @@ export function McpSettings() {
       statusDetail: undefined,
     }
 
-    setBusyServerName(server.name)
+    setBusyServerKey(getServerIdentityKey(server))
     setView((current) => {
       if (current.type !== 'details' && current.type !== 'edit') return current
       if (getServerIdentityKey(current.server) !== getServerIdentityKey(server)) return current
@@ -574,7 +613,7 @@ export function McpSettings() {
         message: error instanceof Error ? error.message : t('settings.mcp.toast.reconnectFailed'),
       })
     } finally {
-      setBusyServerName(null)
+      setBusyServerKey(null)
     }
   }
 
@@ -719,7 +758,7 @@ export function McpSettings() {
               </div>
             </div>
             {server.canReconnect && (
-              <Button variant="secondary" onClick={() => handleReconnect(server)} loading={busyServerName === server.name}>
+              <Button variant="secondary" onClick={() => handleReconnect(server)} loading={busyServerKey === getServerIdentityKey(server)}>
                 <span className="material-symbols-outlined text-[16px]">sync</span>
                 {t('settings.mcp.form.reconnect')}
               </Button>
@@ -799,7 +838,7 @@ export function McpSettings() {
 
             <div className="flex items-center gap-3">
               {editing && targetServer?.canReconnect && (
-                <Button variant="secondary" onClick={() => handleReconnect(targetServer)} loading={busyServerName === targetServer.name}>
+                <Button variant="secondary" onClick={() => handleReconnect(targetServer)} loading={busyServerKey === getServerIdentityKey(targetServer)}>
                   <span className="material-symbols-outlined text-[16px]">sync</span>
                   {t('settings.mcp.form.reconnect')}
                 </Button>
@@ -1038,7 +1077,7 @@ export function McpSettings() {
           <p className="text-sm text-[var(--color-error)] mb-3">{error}</p>
           <button
             type="button"
-            onClick={() => void fetchServers(undefined, currentWorkDir)}
+            onClick={() => void fetchServers(projectPathsForFetchRef.current, currentWorkDir)}
             className="text-sm text-[var(--color-text-accent)] hover:underline"
           >
             {t('common.retry')}
@@ -1067,9 +1106,9 @@ export function McpSettings() {
                 <div className="rounded-[28px] border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
                   {groupServers.map((server) => (
                     <ServerRow
-                      key={`${server.scope}:${server.name}`}
+                      key={getServerIdentityKey(server)}
                       server={server}
-                      isBusy={busyServerName === server.name}
+                      isBusy={busyServerKey === getServerIdentityKey(server)}
                       onOpen={() => beginEdit(server)}
                       onToggle={() => void handleToggle(server)}
                       t={t}

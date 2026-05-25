@@ -197,6 +197,44 @@ describe('MCP API', () => {
     expect(connectSpy).not.toHaveBeenCalled()
   })
 
+  it('lists project paths that contain user-private MCP servers', async () => {
+    const previousNodeEnv = process.env.NODE_ENV
+    const projectB = path.join(tmpDir, 'project-b')
+    await fs.mkdir(projectB, { recursive: true })
+    process.env.NODE_ENV = 'development'
+    clearConfigPathCaches()
+
+    try {
+      const create = makeRequest('POST', '/api/mcp', {
+        cwd: projectB,
+        name: 'private-context7',
+        scope: 'local',
+        config: {
+          type: 'stdio',
+          command: 'npx',
+          args: ['@upstash/context7-mcp'],
+          env: {},
+        },
+      })
+      const createRes = await handleMcpApi(create.req, create.url, create.segments)
+      expect(createRes.status).toBe(201)
+
+      const projectPaths = makeRequest('GET', '/api/mcp/project-paths')
+      const projectPathsRes = await handleMcpApi(projectPaths.req, projectPaths.url, projectPaths.segments)
+      expect(projectPathsRes.status).toBe(200)
+      const body = await projectPathsRes.json()
+
+      expect(body.projectPaths).toEqual([projectB])
+    } finally {
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previousNodeEnv
+      }
+      clearConfigPathCaches()
+    }
+  })
+
   it('updates project MCP servers from their previous cwd into the selected target cwd', async () => {
     const projectA = path.join(tmpDir, 'project-a')
     const projectB = path.join(tmpDir, 'project-b')

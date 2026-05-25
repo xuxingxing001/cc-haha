@@ -4,6 +4,7 @@ import '@testing-library/jest-dom'
 
 import { McpSettings } from '../pages/McpSettings'
 import { sessionsApi } from '../api/sessions'
+import { mcpApi } from '../api/mcp'
 import { useMcpStore } from '../stores/mcpStore'
 import { useSessionStore } from '../stores/sessionStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -15,6 +16,17 @@ vi.mock('../api/sessions', async (importOriginal) => {
     sessionsApi: {
       ...actual.sessionsApi,
       getRecentProjects: vi.fn(),
+    },
+  }
+})
+
+vi.mock('../api/mcp', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api/mcp')>()
+  return {
+    ...actual,
+    mcpApi: {
+      ...actual.mcpApi,
+      projectPaths: vi.fn(),
     },
   }
 })
@@ -32,6 +44,9 @@ describe('McpSettings', () => {
         modifiedAt: '2026-05-25T00:00:00.000Z',
         sessionCount: 1,
       }],
+    })
+    vi.mocked(mcpApi.projectPaths).mockResolvedValue({
+      projectPaths: ['/workspace/config-project'],
     })
     useSettingsStore.setState({ locale: 'en' })
     useSessionStore.setState({
@@ -73,13 +88,18 @@ describe('McpSettings', () => {
     })
   })
 
-  it('loads MCP servers for the active project on mount', () => {
+  it('loads MCP servers for the active and recent projects on mount', async () => {
     const fetchServers = vi.fn()
     useMcpStore.setState({ fetchServers })
 
     render(<McpSettings />)
 
-    expect(fetchServers).toHaveBeenCalledWith(undefined, '/workspace/project')
+    await waitFor(() => {
+      expect(fetchServers).toHaveBeenCalledWith(
+        ['/workspace/project', '/workspace/selected-project', '/workspace/config-project'],
+        '/workspace/project',
+      )
+    })
   })
 
   it('renders the empty state and add button', () => {
@@ -132,6 +152,51 @@ describe('McpSettings', () => {
     expect(screen.getAllByText('User').length).toBeGreaterThan(0)
     expect(screen.getByText('plugin:telegram:telegram')).toBeInTheDocument()
     expect(screen.getByText('global-user')).toBeInTheDocument()
+  })
+
+  it('keeps same-name project MCP servers distinct by project path', () => {
+    useMcpStore.setState({
+      servers: [
+        {
+          name: 'context7',
+          scope: 'local',
+          transport: 'stdio',
+          enabled: true,
+          status: 'connected',
+          statusLabel: 'Connected',
+          configLocation: '/workspace/project-a/.claude.json',
+          summary: 'npx @upstash/context7-mcp',
+          canEdit: true,
+          canRemove: true,
+          canReconnect: true,
+          canToggle: true,
+          projectPath: '/workspace/project-a',
+          config: { type: 'stdio', command: 'npx', args: ['@upstash/context7-mcp'], env: {} },
+        },
+        {
+          name: 'context7',
+          scope: 'local',
+          transport: 'stdio',
+          enabled: true,
+          status: 'connected',
+          statusLabel: 'Connected',
+          configLocation: '/workspace/project-b/.claude.json',
+          summary: 'npx @upstash/context7-mcp',
+          canEdit: true,
+          canRemove: true,
+          canReconnect: true,
+          canToggle: true,
+          projectPath: '/workspace/project-b',
+          config: { type: 'stdio', command: 'npx', args: ['@upstash/context7-mcp'], env: {} },
+        },
+      ],
+    })
+
+    render(<McpSettings />)
+
+    expect(screen.getAllByText('context7')).toHaveLength(2)
+    expect(screen.getByText('/workspace/project-a')).toBeInTheDocument()
+    expect(screen.getByText('/workspace/project-b')).toBeInTheDocument()
   })
 
   it('starts background status refresh after the fast list render', async () => {
