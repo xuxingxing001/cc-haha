@@ -94,6 +94,7 @@ export const zh: Record<TranslationKey, string> = {
   'openProject.openFailed': '无法打开项目',
 
   // ─── Open With ─────────────────────────────────────
+  'openWith.title': '打开方式',
   'openWith.inAppBrowser': '应用内浏览器',
   'openWith.systemBrowser': '系统浏览器',
   'openWith.systemDefault': '系统默认打开',

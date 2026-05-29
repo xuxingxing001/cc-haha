@@ -1,7 +1,15 @@
 import { useCallback, useMemo, useState } from 'react'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import { sessionsApi, type SessionTurnCheckpoint } from '../../api/sessions'
-import { useTranslation } from '../../i18n'
+import { useTranslation, type TranslationKey } from '../../i18n'
 import { WorkspaceDiffSurface } from '../workspace/WorkspaceCodeSurface'
+import { OpenWithMenu } from '../common/OpenWithMenu'
+import { buildOpenWithItems, type OpenWithItem } from '../../lib/openWithItems'
+import { openWithContextForWorkspaceFile } from '../../lib/openWithContextForHref'
+import { getServerBaseUrl } from '../../lib/desktopRuntime'
+import { useOpenTargetStore } from '../../stores/openTargetStore'
+import { useBrowserPanelStore } from '../../stores/browserPanelStore'
+import { useWorkspacePanelStore } from '../../stores/workspacePanelStore'
 
 type DiffPreviewState = {
   loading: boolean
@@ -38,6 +46,7 @@ export function CurrentTurnChangeCard({
   const t = useTranslation()
   const [expandedPath, setExpandedPath] = useState<string | null>(null)
   const [diffByPath, setDiffByPath] = useState<Record<string, DiffPreviewState>>({})
+  const [openWith, setOpenWith] = useState<{ items: OpenWithItem[]; anchor: DOMRect } | null>(null)
 
   const files = useMemo<ChangedFileEntry[]>(
     () => checkpoint.code.filesChanged.map((filePath) => ({
@@ -90,6 +99,27 @@ export function CurrentTurnChangeCard({
         }))
       })
   }, [diffByPath, expandedPath, sessionId, t, targetUserMessageId])
+
+  const handleOpenWith = useCallback((event: ReactMouseEvent<HTMLButtonElement>, fileEntry: ChangedFileEntry) => {
+    event.stopPropagation()
+    const rect = event.currentTarget.getBoundingClientRect()
+    void (async () => {
+      await useOpenTargetStore.getState().ensureTargets()
+      const targets = useOpenTargetStore.getState().targets
+      const ctx = openWithContextForWorkspaceFile(fileEntry.displayPath, fileEntry.apiPath, {
+        sessionId,
+        serverBaseUrl: getServerBaseUrl(),
+      })
+      const items = buildOpenWithItems(ctx, targets, {
+        openInAppBrowser: (url) => useBrowserPanelStore.getState().open(sessionId, url),
+        openSystem: (p) => { void import('@tauri-apps/plugin-shell').then((m) => m.open(p)).catch(() => {}) },
+        openWorkspacePreview: (rel) => { void useWorkspacePanelStore.getState().openPreview(sessionId, rel, 'file') },
+        openTarget: (id, abs) => { void useOpenTargetStore.getState().openTarget(id, abs) },
+        t: (k, v) => t(k as TranslationKey, v),
+      })
+      setOpenWith({ items, anchor: rect })
+    })()
+  }, [sessionId, t])
 
   const cardLabel = isLatest
     ? t('chat.turnChangesLatestCardLabel')
@@ -145,22 +175,32 @@ export function CurrentTurnChangeCard({
           const diffState = diffByPath[fileEntry.apiPath]
           return (
             <div key={fileEntry.apiPath}>
-              <button
-                type="button"
-                onClick={() => toggleDiff(fileEntry)}
-                aria-label={t(
-                  isExpanded ? 'chat.turnChangesHideDiffAria' : 'chat.turnChangesShowDiffAria',
-                  { path: fileEntry.displayPath },
-                )}
-                className="flex min-h-11 w-full items-center gap-3 px-4 text-left text-sm text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-brand)]/35"
-              >
-                <span className="material-symbols-outlined shrink-0 text-[17px] text-[var(--color-text-tertiary)]">
-                  {isExpanded ? 'keyboard_arrow_down' : 'chevron_right'}
-                </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-[13px]">
-                  {fileEntry.displayPath}
-                </span>
-              </button>
+              <div className="flex items-center">
+                <button
+                  type="button"
+                  onClick={() => toggleDiff(fileEntry)}
+                  aria-label={t(
+                    isExpanded ? 'chat.turnChangesHideDiffAria' : 'chat.turnChangesShowDiffAria',
+                    { path: fileEntry.displayPath },
+                  )}
+                  className="flex min-h-11 flex-1 items-center gap-3 px-4 text-left text-sm text-[var(--color-text-primary)] transition-colors hover:bg-[var(--color-surface-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--color-brand)]/35"
+                >
+                  <span className="material-symbols-outlined shrink-0 text-[17px] text-[var(--color-text-tertiary)]">
+                    {isExpanded ? 'keyboard_arrow_down' : 'chevron_right'}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[13px]">
+                    {fileEntry.displayPath}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  aria-label={t('openWith.title')}
+                  onClick={(event) => handleOpenWith(event, fileEntry)}
+                  className="mr-2 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--radius-md)] text-[var(--color-text-tertiary)] hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-brand)]/35"
+                >
+                  <span className="material-symbols-outlined text-[18px]">open_in_new</span>
+                </button>
+              </div>
 
               {isExpanded && (
                 <div className="border-t border-[var(--color-border)] bg-[var(--color-surface-container-lowest)] px-4 py-3">
@@ -195,6 +235,8 @@ export function CurrentTurnChangeCard({
           {error}
         </div>
       )}
+
+      {openWith && <OpenWithMenu items={openWith.items} anchor={openWith.anchor} onClose={() => setOpenWith(null)} />}
     </section>
   )
 }

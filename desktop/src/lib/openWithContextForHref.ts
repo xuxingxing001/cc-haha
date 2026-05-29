@@ -2,6 +2,23 @@ import { classifyPreviewLink } from './previewLinkRouter'
 import { previewFsUrl } from './handlePreviewLink'
 import type { OpenWithContext } from './openWithItems'
 
+const HTML_EXT = /\.(html?|xhtml)$/i
+
+/** Build an open-with context for a workspace file (we have both its relative + absolute path). */
+export function openWithContextForWorkspaceFile(
+  relPath: string,
+  absolutePath: string,
+  opts: { sessionId: string; serverBaseUrl: string },
+): OpenWithContext {
+  return {
+    kind: 'file',
+    absolutePath,
+    relPath,
+    previewable: true,
+    inAppBrowserUrl: HTML_EXT.test(relPath) ? previewFsUrl(opts.serverBaseUrl, opts.sessionId, relPath) : undefined,
+  }
+}
+
 function resolveAbsolute(workDir: string | undefined, p: string): string {
   if (!workDir || p.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(p)) return p
   return `${workDir.replace(/[\\/]+$/, '')}/${p.replace(/^[/\\]+/, '')}`

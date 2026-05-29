@@ -92,6 +92,7 @@ export const en = {
   'openProject.openFailed': 'Could not open project',
 
   // ─── Open With ─────────────────────────────────────
+  'openWith.title': 'Open with',
   'openWith.inAppBrowser': 'In-app browser',
   'openWith.systemBrowser': 'System browser',
   'openWith.systemDefault': 'Open with system default',

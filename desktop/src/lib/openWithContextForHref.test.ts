@@ -5,7 +5,7 @@ vi.mock('./desktopRuntime', () => ({
   isLoopbackHostname: (h: string) => h === 'localhost' || h === '127.0.0.1' || h === '::1',
 }))
 
-import { openWithContextForHref } from './openWithContextForHref'
+import { openWithContextForHref, openWithContextForWorkspaceFile } from './openWithContextForHref'
 import { previewFsUrl } from './handlePreviewLink'
 
 const BASE = 'http://127.0.0.1:4321'
@@ -49,5 +49,41 @@ describe('openWithContextForHref', () => {
   it('relative path with trailing slash on workDir → correct absolutePath', () => {
     const result = openWithContextForHref('src/index.ts', { sessionId: SESSION, serverBaseUrl: BASE, workDir: '/proj/' })
     expect(result).toEqual({ kind: 'file', absolutePath: '/proj/src/index.ts', relPath: 'src/index.ts', previewable: true })
+  })
+})
+
+describe('openWithContextForWorkspaceFile', () => {
+  it('.md rel path → { kind:"file", absolutePath, relPath, previewable:true } with no inAppBrowserUrl', () => {
+    const result = openWithContextForWorkspaceFile('README.md', '/w/proj/README.md', { sessionId: SESSION, serverBaseUrl: BASE })
+    expect(result).toEqual({ kind: 'file', absolutePath: '/w/proj/README.md', relPath: 'README.md', previewable: true })
+  })
+
+  it('index.html rel path → also has inAppBrowserUrl equal to previewFsUrl', () => {
+    const result = openWithContextForWorkspaceFile('index.html', '/w/proj/index.html', { sessionId: SESSION, serverBaseUrl: BASE })
+    expect(result).toEqual({
+      kind: 'file',
+      absolutePath: '/w/proj/index.html',
+      relPath: 'index.html',
+      previewable: true,
+      inAppBrowserUrl: previewFsUrl(BASE, SESSION, 'index.html'),
+    })
+  })
+
+  it('.htm extension → also has inAppBrowserUrl', () => {
+    const result = openWithContextForWorkspaceFile('page.htm', '/w/proj/page.htm', { sessionId: SESSION, serverBaseUrl: BASE })
+    expect(result.kind).toBe('file')
+    if (result.kind === 'file') {
+      expect(result.inAppBrowserUrl).toBeDefined()
+      expect(result.inAppBrowserUrl).toBe(previewFsUrl(BASE, SESSION, 'page.htm'))
+    }
+  })
+
+  it('.ts rel path → no inAppBrowserUrl', () => {
+    const result = openWithContextForWorkspaceFile('src/app.ts', '/w/proj/src/app.ts', { sessionId: SESSION, serverBaseUrl: BASE })
+    expect(result.kind).toBe('file')
+    if (result.kind === 'file') {
+      expect(result.inAppBrowserUrl).toBeUndefined()
+      expect(result.previewable).toBe(true)
+    }
   })
 })
