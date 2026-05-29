@@ -1,3 +1,27 @@
+use std::sync::Mutex;
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Runtime, WebviewBuilder, WebviewUrl};
+
+const PREVIEW_LABEL: &str = "preview";
+
+/// M1 placeholder init script; replaced by the real preview-agent bundle in a later milestone.
+const PREVIEW_INIT_SCRIPT: &str = "window.__PREVIEW_AGENT_READY__ = true;";
+
+#[derive(Default)]
+pub struct PreviewState(Mutex<PreviewInner>);
+
+#[derive(Default)]
+struct PreviewInner {
+    created: bool,
+}
+
+#[derive(serde::Deserialize)]
+pub struct PreviewBounds {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
 /// 仅允许 http/https；其它（file:、javascript: 等）拒绝。返回规范化后的 url 字符串。
 pub fn normalize_preview_url(input: &str) -> Result<String, String> {
     let trimmed = input.trim();
@@ -10,6 +34,99 @@ pub fn normalize_preview_url(input: &str) -> Result<String, String> {
     } else {
         Err(format!("unsupported url scheme: {trimmed}"))
     }
+}
+
+#[tauri::command]
+pub async fn preview_open<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, PreviewState>,
+    url: String,
+    bounds: PreviewBounds,
+) -> Result<(), String> {
+    let normalized = normalize_preview_url(&url)?;
+    let target = tauri::Url::parse(&normalized).map_err(|e| e.to_string())?;
+
+    if let Some(webview) = app.get_webview(PREVIEW_LABEL) {
+        webview.navigate(target).map_err(|e| e.to_string())?;
+        webview
+            .set_position(LogicalPosition::new(bounds.x, bounds.y))
+            .map_err(|e| e.to_string())?;
+        webview
+            .set_size(LogicalSize::new(bounds.width, bounds.height))
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    // `add_child` lives on `Window<R>`, not `WebviewWindow<R>`; `get_window`
+    // (unstable, enabled) returns the underlying `Window` for the same OS window.
+    let main = app
+        .get_window(crate::MAIN_WINDOW_LABEL)
+        .ok_or_else(|| "main window not found".to_string())?;
+    let builder = WebviewBuilder::new(PREVIEW_LABEL, WebviewUrl::External(target))
+        .initialization_script(PREVIEW_INIT_SCRIPT);
+    main.add_child(
+        builder,
+        LogicalPosition::new(bounds.x, bounds.y),
+        LogicalSize::new(bounds.width, bounds.height),
+    )
+    .map_err(|e| e.to_string())?;
+
+    state.0.lock().unwrap().created = true;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn preview_navigate<R: Runtime>(app: AppHandle<R>, url: String) -> Result<(), String> {
+    let normalized = normalize_preview_url(&url)?;
+    let target = tauri::Url::parse(&normalized).map_err(|e| e.to_string())?;
+    let webview = app
+        .get_webview(PREVIEW_LABEL)
+        .ok_or_else(|| "preview not open".to_string())?;
+    webview.navigate(target).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn preview_set_bounds<R: Runtime>(
+    app: AppHandle<R>,
+    bounds: PreviewBounds,
+) -> Result<(), String> {
+    let Some(webview) = app.get_webview(PREVIEW_LABEL) else {
+        return Ok(());
+    };
+    webview
+        .set_position(LogicalPosition::new(bounds.x, bounds.y))
+        .map_err(|e| e.to_string())?;
+    webview
+        .set_size(LogicalSize::new(bounds.width, bounds.height))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn preview_set_visible<R: Runtime>(
+    app: AppHandle<R>,
+    visible: bool,
+) -> Result<(), String> {
+    let Some(webview) = app.get_webview(PREVIEW_LABEL) else {
+        return Ok(());
+    };
+    if visible {
+        webview.show().map_err(|e| e.to_string())
+    } else {
+        webview.hide().map_err(|e| e.to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn preview_close<R: Runtime>(
+    app: AppHandle<R>,
+    state: tauri::State<'_, PreviewState>,
+) -> Result<(), String> {
+    if let Some(webview) = app.get_webview(PREVIEW_LABEL) {
+        webview.close().map_err(|e| e.to_string())?;
+    }
+    state.0.lock().unwrap().created = false;
+    Ok(())
 }
 
 #[cfg(test)]

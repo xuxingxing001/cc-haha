@@ -2159,6 +2159,7 @@ pub fn run() {
         .manage(AdapterState::default())
         .manage(TerminalState::default())
         .manage(AppExitState::default())
+        .manage(webview_panel::PreviewState::default())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -2183,7 +2184,12 @@ pub fn run() {
             get_app_mode,
             set_app_mode,
             detect_portable_dir,
-            set_app_zoom
+            set_app_zoom,
+            webview_panel::preview_open,
+            webview_panel::preview_navigate,
+            webview_panel::preview_set_bounds,
+            webview_panel::preview_set_visible,
+            webview_panel::preview_close
         ]);
 
     // macOS: native menu bar (traffic-light overlay style)
