@@ -1,15 +1,43 @@
-import { memo } from 'react'
+import { memo, useCallback } from 'react'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer'
 import { MessageActionBar, type MessageBranchAction } from './MessageActionBar'
 import { InlineImageGallery } from './InlineImageGallery'
+import { handlePreviewLink } from '../../lib/handlePreviewLink'
+import { getServerBaseUrl } from '../../lib/desktopRuntime'
+import { useBrowserPanelStore } from '../../stores/browserPanelStore'
+import { useWorkspacePanelStore } from '../../stores/workspacePanelStore'
 
 type Props = {
   content: string
   isStreaming?: boolean
   branchAction?: MessageBranchAction
+  sessionId?: string
 }
 
-export const AssistantMessage = memo(function AssistantMessage({ content, isStreaming, branchAction }: Props) {
+export const AssistantMessage = memo(function AssistantMessage({ content, isStreaming, branchAction, sessionId }: Props) {
+  const handleLinkClick = useCallback(
+    (href: string, event: ReactMouseEvent<HTMLDivElement>): boolean => {
+      if (!sessionId) return false
+      const handled = handlePreviewLink(href, {
+        sessionId,
+        serverBaseUrl: getServerBaseUrl(),
+        openBrowser: (id, url) => useBrowserPanelStore.getState().open(id, url),
+        openFilePreview: (id, path) => {
+          void useWorkspacePanelStore.getState().openPreview(id, path, 'file')
+        },
+        openExternal: (url) => {
+          void import('@tauri-apps/plugin-shell')
+            .then((m) => m.open(url))
+            .catch(() => window.open(url, '_blank'))
+        },
+      })
+      if (handled) event.preventDefault()
+      return handled
+    },
+    [sessionId],
+  )
+
   if (!content.trim()) return null
 
   const documentLayout = shouldUseDocumentLayout(content)
@@ -32,6 +60,7 @@ export const AssistantMessage = memo(function AssistantMessage({ content, isStre
             content={content}
             variant={documentLayout ? 'document' : 'default'}
             streaming={isStreaming}
+            onLinkClick={sessionId ? handleLinkClick : undefined}
           />
           {!isStreaming && <InlineImageGallery text={content} />}
           {isStreaming && (
