@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 beforeAll(() => {
@@ -15,12 +15,14 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: () => Promise.resolve(() => {}
 import { BrowserSurface } from './BrowserSurface'
 import { useBrowserPanelStore } from '../../stores/browserPanelStore'
 import { useWorkspacePanelStore } from '../../stores/workspacePanelStore'
+import { useOverlayStore } from '../../stores/overlayStore'
 
 afterEach(() => {
   Object.values(bridge).forEach((f) => f.mockReset())
   useBrowserPanelStore.setState(useBrowserPanelStore.getInitialState(), true)
   // browserPanelStore.open() now also opens the unified workbench; keep it isolated.
   useWorkspacePanelStore.setState(useWorkspacePanelStore.getInitialState(), true)
+  useOverlayStore.setState(useOverlayStore.getInitialState(), true)
 })
 
 describe('BrowserSurface', () => {
@@ -102,5 +104,38 @@ describe('BrowserSurface', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('hides the native webview when a fullscreen overlay opens, then re-shows it when the overlay closes', () => {
+    useBrowserPanelStore.getState().open('s1', 'http://localhost:5173/')
+    render(<BrowserSurface sessionId="s1" />)
+
+    // Initial mount: visibility-sync effect reveals the webview (count === 0).
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(true)
+
+    // Overlay opens → webview must hide.
+    act(() => { useOverlayStore.getState().push() })
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(false)
+
+    // Overlay closes → webview must re-show (panel still mounted in browser mode).
+    act(() => { useOverlayStore.getState().pop() })
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(true)
+  })
+
+  it('keeps the native webview hidden while multiple overlays stack', () => {
+    useBrowserPanelStore.getState().open('s1', 'http://localhost:5173/')
+    render(<BrowserSurface sessionId="s1" />)
+
+    act(() => { useOverlayStore.getState().push() })
+    act(() => { useOverlayStore.getState().push() })
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(false)
+
+    // Popping just one leaves count === 1 → still hidden.
+    act(() => { useOverlayStore.getState().pop() })
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(false)
+
+    // Popping the last one → re-shown.
+    act(() => { useOverlayStore.getState().pop() })
+    expect(bridge.setVisible).toHaveBeenLastCalledWith(true)
   })
 })

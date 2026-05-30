@@ -5,11 +5,13 @@ import { computeWebviewBounds } from './computeWebviewBounds'
 import { previewBridge } from '../../lib/previewBridge'
 import { subscribePreviewEvents } from '../../lib/previewEvents'
 import { useBrowserPanelStore } from '../../stores/browserPanelStore'
+import { useOverlayStore } from '../../stores/overlayStore'
 
 export function BrowserSurface({ sessionId }: { sessionId: string }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const session = useBrowserPanelStore((s) => s.bySession[sessionId])
   const store = useBrowserPanelStore.getState()
+  const overlayCount = useOverlayStore((s) => s.count)
 
   const reportBounds = () => {
     const el = hostRef.current
@@ -21,9 +23,20 @@ export function BrowserSurface({ sessionId }: { sessionId: string }) {
     const el = hostRef.current
     if (!el || !session) return
     previewBridge.open(session.url, computeWebviewBounds(el.getBoundingClientRect()))
-    previewBridge.setVisible(true)
+    // The visibility-sync effect below owns setVisible() — including the
+    // initial reveal — so it always factors in overlayCount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
+
+  // Visibility-sync: a fullscreen DOM overlay (e.g. ImageGalleryModal) would
+  // otherwise be partially covered by the native child webview, which always
+  // renders above the DOM. While overlayCount > 0 we hide the webview; when
+  // it returns to 0 (and we're still mounted in browser mode) we re-show it.
+  // The Workbench-mode unmount teardown effect below still runs on unmount.
+  useEffect(() => {
+    if (!session) return
+    previewBridge.setVisible(overlayCount === 0)
+  }, [overlayCount, session])
 
   useEffect(() => {
     const el = hostRef.current
