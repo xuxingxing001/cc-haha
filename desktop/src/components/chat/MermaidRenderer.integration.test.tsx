@@ -52,6 +52,8 @@ describe('MermaidRenderer Mermaid integration', () => {
     expect(surface).toHaveTextContent('企业建站')
     expect(surface).toHaveTextContent('主旨系统')
     expect(surface).toHaveTextContent('Codex 初期')
+    expect(surface.querySelector('svg')).not.toHaveAttribute('width', '100%')
+    expect(surface.querySelector('[data-edge="true"]')?.getAttribute('style')).toContain('vector-effect: non-scaling-stroke')
     expect(surface.innerHTML).not.toContain('<script')
     expect(surface.innerHTML).not.toContain('onerror')
   })

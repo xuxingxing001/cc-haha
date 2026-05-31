@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react'
 import DOMPurify from 'dompurify'
 import mermaid from 'mermaid'
 import { Modal } from '../shared/Modal'
@@ -10,9 +10,10 @@ type Props = {
   code: string
 }
 
-const MIN_PREVIEW_ZOOM = 0.5
+const MIN_PREVIEW_ZOOM = 0.05
 const MAX_PREVIEW_ZOOM = 3
 const PREVIEW_ZOOM_STEP = 0.25
+const PREVIEW_FIT_PADDING = 48
 
 type SvgMetrics = {
   width: number
@@ -25,6 +26,16 @@ type DragState = {
   startY: number
   scrollLeft: number
   scrollTop: number
+}
+
+type MermaidThemeColors = {
+  textColor: string
+  mutedTextColor: string
+  surfaceColor: string
+  nodeColor: string
+  accentColor: string
+  lineColor: string
+  isDark: boolean
 }
 
 function rgbToHex(color: string, fallback: string) {
@@ -62,20 +73,37 @@ function resolveThemeColor(token: string, fallback: string) {
   return rgbToHex(resolved, fallback)
 }
 
-function initMermaid(theme: ThemeMode) {
+function getMermaidThemeColors(theme: ThemeMode): MermaidThemeColors {
   const isDark = theme === 'dark'
-  const textColor = resolveThemeColor('--color-text-primary', isDark ? '#E5E2E1' : '#1B1C1A')
-  const mutedTextColor = resolveThemeColor('--color-text-secondary', isDark ? '#B7AAA5' : '#61514B')
-  const surfaceColor = resolveThemeColor('--color-surface-container-lowest', isDark ? '#0E0E0E' : '#FFFFFF')
-  const nodeColor = resolveThemeColor('--color-surface-container-low', isDark ? '#1C1B1B' : '#F4EFEA')
-  const accentColor = resolveThemeColor('--color-primary', isDark ? '#FFB59F' : '#8F482F')
-  const lineColor = resolveThemeColor('--color-outline', isDark ? '#8D7F7A' : '#87736D')
+  return {
+    textColor: resolveThemeColor('--color-text-primary', isDark ? '#E5E2E1' : '#1B1C1A'),
+    mutedTextColor: resolveThemeColor('--color-text-secondary', isDark ? '#B7AAA5' : '#61514B'),
+    surfaceColor: resolveThemeColor('--color-surface-container-lowest', isDark ? '#0E0E0E' : '#FFFFFF'),
+    nodeColor: resolveThemeColor('--color-surface-container-low', isDark ? '#1C1B1B' : '#F4EFEA'),
+    accentColor: resolveThemeColor('--color-primary', isDark ? '#FFB59F' : '#8F482F'),
+    lineColor: resolveThemeColor('--color-outline', isDark ? '#BFAEAA' : '#667485'),
+    isDark,
+  }
+}
+
+function initMermaid(theme: ThemeMode) {
+  const {
+    textColor,
+    mutedTextColor,
+    surfaceColor,
+    nodeColor,
+    accentColor,
+    lineColor,
+    isDark,
+  } = getMermaidThemeColors(theme)
 
   mermaid.initialize({
     startOnLoad: false,
     theme: 'base',
+    htmlLabels: false,
     flowchart: {
       htmlLabels: false,
+      arrowMarkerAbsolute: true,
     },
     themeVariables: {
       darkMode: isDark,
@@ -108,6 +136,8 @@ function initMermaid(theme: ThemeMode) {
     suppressErrorRendering: true,
     fontFamily: 'var(--font-sans)',
   })
+
+  return { lineColor }
 }
 
 let mermaidIdCounter = 0
@@ -119,8 +149,93 @@ function sanitizeMermaidSvg(svg: string) {
   })
 }
 
+function formatSvgDimension(value: number) {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)))
+}
+
+function getSvgStyleProperty(element: Element, property: string) {
+  const style = element.getAttribute('style') ?? ''
+  const escapedProperty = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = new RegExp(`(?:^|;)\\s*${escapedProperty}\\s*:\\s*([^;]+)`, 'i').exec(style)
+  return match?.[1]?.trim() ?? ''
+}
+
+function setSvgStyle(element: Element, property: string, value: string, overwrite = true) {
+  if (!overwrite && getSvgStyleProperty(element, property)) return
+
+  const style = element.getAttribute('style') ?? ''
+  const escapedProperty = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const declaration = `${property}: ${value}`
+  const pattern = new RegExp(`(^|;)\\s*${escapedProperty}\\s*:[^;]*`, 'i')
+  const nextStyle = pattern.test(style)
+    ? style.replace(pattern, (_, prefix: string) => `${prefix}${declaration}`)
+    : `${style.trim().replace(/;$/, '')}${style.trim() ? '; ' : ''}${declaration}`
+
+  element.setAttribute('style', nextStyle)
+}
+
+function setSvgFallbackStyle(element: Element, property: string, value: string) {
+  if (element.hasAttribute(property)) return
+  setSvgStyle(element, property, value, false)
+}
+
+function normalizeMermaidSvg(svg: string, lineColor: string) {
+  if (typeof DOMParser === 'undefined' || typeof XMLSerializer === 'undefined') {
+    return svg
+  }
+
+  const parsed = new DOMParser().parseFromString(svg, 'image/svg+xml')
+  if (parsed.querySelector('parsererror')) return svg
+
+  const root = parsed.querySelector('svg')
+  if (!root) return svg
+
+  const metrics = parseSvgMetrics(svg)
+  if (metrics) {
+    root.setAttribute('width', formatSvgDimension(metrics.width))
+    root.setAttribute('height', formatSvgDimension(metrics.height))
+  }
+
+  root.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+  setSvgStyle(root, 'display', 'block')
+  setSvgStyle(root, 'max-width', 'none')
+  setSvgStyle(root, 'height', metrics ? `${formatSvgDimension(metrics.height)}px` : 'auto')
+  setSvgStyle(root, 'background', 'transparent')
+  setSvgStyle(root, 'overflow', 'visible')
+
+  root
+    .querySelectorAll('[data-edge="true"], .flowchart-link, .edgePath .path')
+    .forEach((edge) => {
+      setSvgFallbackStyle(edge, 'stroke', lineColor)
+      setSvgFallbackStyle(edge, 'stroke-width', '1.6px')
+      setSvgFallbackStyle(edge, 'fill', 'none')
+      setSvgStyle(edge, 'vector-effect', 'non-scaling-stroke')
+    })
+
+  root
+    .querySelectorAll('.marker, .arrowMarkerPath, marker path')
+    .forEach((marker) => {
+      setSvgFallbackStyle(marker, 'fill', lineColor)
+      setSvgFallbackStyle(marker, 'stroke', lineColor)
+    })
+
+  return new XMLSerializer().serializeToString(root)
+}
+
 function clampZoom(value: number) {
   return Math.min(MAX_PREVIEW_ZOOM, Math.max(MIN_PREVIEW_ZOOM, value))
+}
+
+function calculateFitZoom(metrics: SvgMetrics, viewport: HTMLElement | null) {
+  if (!viewport) return 1
+
+  const viewportWidth = viewport.clientWidth
+  const viewportHeight = viewport.clientHeight
+  if (viewportWidth <= 0 || viewportHeight <= 0) return 1
+
+  const availableWidth = Math.max(1, viewportWidth - PREVIEW_FIT_PADDING)
+  const availableHeight = Math.max(1, viewportHeight - PREVIEW_FIT_PADDING)
+  return clampZoom(Math.min(1, availableWidth / metrics.width, availableHeight / metrics.height))
 }
 
 function getPointerPosition(
@@ -180,20 +295,45 @@ export function MermaidRenderer({ code }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
   const [previewZoom, setPreviewZoom] = useState(1)
+  const [previewFitMode, setPreviewFitMode] = useState(true)
   const [isDraggingPreview, setIsDraggingPreview] = useState(false)
+  const [inlineViewportWidth, setInlineViewportWidth] = useState(0)
 
   const svgMetrics = svg ? parseSvgMetrics(svg) : null
+  const sanitizedSvg = useMemo(() => (svg ? sanitizeMermaidSvg(svg) : null), [svg])
+  const inlineZoom = svgMetrics && inlineViewportWidth > 0
+    ? clampZoom(Math.min(1, Math.max(1, inlineViewportWidth - 32) / svgMetrics.width))
+    : 1
+
+  const inlineFrameStyle = svgMetrics
+    ? {
+        position: 'relative' as const,
+        width: `${svgMetrics.width * inlineZoom}px`,
+        height: `${svgMetrics.height * inlineZoom}px`,
+      }
+    : undefined
+  const inlineCanvasStyle = svgMetrics
+    ? {
+        position: 'absolute' as const,
+        left: 0,
+        top: 0,
+        width: `${svgMetrics.width}px`,
+        height: `${svgMetrics.height}px`,
+        transform: `scale(${inlineZoom})`,
+        transformOrigin: 'top left',
+      }
+    : undefined
 
   useEffect(() => {
     let cancelled = false
-    initMermaid(theme)
+    const { lineColor } = initMermaid(theme)
 
     const id = `mermaid-${++mermaidIdCounter}`
 
     mermaid.render(id, code).then(
       ({ svg: renderedSvg }) => {
         if (!cancelled) {
-          setSvg(renderedSvg)
+          setSvg(normalizeMermaidSvg(renderedSvg, lineColor))
           setError(null)
         }
       },
@@ -208,25 +348,103 @@ export function MermaidRenderer({ code }: Props) {
     return () => { cancelled = true }
   }, [code, theme])
 
+  useLayoutEffect(() => {
+    const container = containerRef.current
+    if (!container) return undefined
+
+    const updateInlineWidth = () => setInlineViewportWidth(container.clientWidth)
+    updateInlineWidth()
+
+    if (typeof ResizeObserver === 'undefined') return undefined
+
+    const resizeObserver = new ResizeObserver(updateInlineWidth)
+    resizeObserver.observe(container)
+    return () => resizeObserver.disconnect()
+  }, [svg])
+
   const handlePreview = useCallback(() => setPreviewOpen(true), [])
   const handlePreviewClose = useCallback(() => setPreviewOpen(false), [])
+  const applyPreviewFit = useCallback(() => {
+    if (!svgMetrics) return
+    setPreviewZoom(calculateFitZoom(svgMetrics, previewViewportRef.current))
+  }, [svgMetrics])
+  const setPreviewZoomAroundCenter = useCallback((nextZoom: number) => {
+    const viewport = previewViewportRef.current
+    const previousZoom = previewZoom
+    const clampedZoom = clampZoom(nextZoom)
+
+    if (!viewport || previousZoom <= 0) {
+      setPreviewZoom(clampedZoom)
+      return
+    }
+
+    const sourceCenterX = (viewport.scrollLeft + viewport.clientWidth / 2) / previousZoom
+    const sourceCenterY = (viewport.scrollTop + viewport.clientHeight / 2) / previousZoom
+    setPreviewZoom(clampedZoom)
+
+    window.requestAnimationFrame(() => {
+      viewport.scrollLeft = Math.max(0, sourceCenterX * clampedZoom - viewport.clientWidth / 2)
+      viewport.scrollTop = Math.max(0, sourceCenterY * clampedZoom - viewport.clientHeight / 2)
+    })
+  }, [previewZoom])
+  const fitPreview = useCallback(() => {
+    setPreviewFitMode(true)
+    applyPreviewFit()
+    const viewport = previewViewportRef.current
+    if (viewport) {
+      viewport.scrollLeft = 0
+      viewport.scrollTop = 0
+    }
+  }, [applyPreviewFit])
   const zoomIn = useCallback(
-    () => setPreviewZoom((value) => clampZoom(value + PREVIEW_ZOOM_STEP)),
-    [],
+    () => {
+      setPreviewFitMode(false)
+      setPreviewZoomAroundCenter(previewZoom + PREVIEW_ZOOM_STEP)
+    },
+    [previewZoom, setPreviewZoomAroundCenter],
   )
   const zoomOut = useCallback(
-    () => setPreviewZoom((value) => clampZoom(value - PREVIEW_ZOOM_STEP)),
-    [],
+    () => {
+      setPreviewFitMode(false)
+      setPreviewZoomAroundCenter(previewZoom - PREVIEW_ZOOM_STEP)
+    },
+    [previewZoom, setPreviewZoomAroundCenter],
   )
-  const resetZoom = useCallback(() => setPreviewZoom(1), [])
+  const resetZoom = useCallback(() => {
+    setPreviewFitMode(false)
+    setPreviewZoomAroundCenter(1)
+  }, [setPreviewZoomAroundCenter])
 
   useEffect(() => {
     if (!previewOpen) {
       setPreviewZoom(1)
+      setPreviewFitMode(true)
       setIsDraggingPreview(false)
       dragStateRef.current = null
     }
   }, [previewOpen, svg])
+
+  useLayoutEffect(() => {
+    if (!previewOpen || !svgMetrics || !previewFitMode) return undefined
+
+    let animationFrame = window.requestAnimationFrame(applyPreviewFit)
+    let resizeObserver: ResizeObserver | null = null
+    const viewport = previewViewportRef.current
+
+    if (viewport && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        if (!previewFitMode) return
+        window.cancelAnimationFrame(animationFrame)
+        animationFrame = window.requestAnimationFrame(applyPreviewFit)
+      })
+      resizeObserver.observe(viewport)
+    }
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame)
+      resizeObserver?.disconnect()
+    }
+  }, [applyPreviewFit, previewFitMode, previewOpen, svgMetrics])
 
   const stopDraggingPreview = useCallback(() => {
     const viewport = previewViewportRef.current
@@ -244,26 +462,14 @@ export function MermaidRenderer({ code }: Props) {
 
   useEffect(() => stopDraggingPreview, [stopDraggingPreview])
 
-  useEffect(() => {
-    if (!previewOpen || !previewContentRef.current) return
-
-    const renderedSvg = previewContentRef.current.querySelector('svg')
-    if (!renderedSvg) return
-
-    renderedSvg.setAttribute('width', '100%')
-    renderedSvg.setAttribute('height', '100%')
-    renderedSvg.style.width = '100%'
-    renderedSvg.style.height = '100%'
-    renderedSvg.style.display = 'block'
-  }, [previewOpen, svg, previewZoom])
-
   const handlePreviewWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (!event.ctrlKey && !event.metaKey) return
 
     event.preventDefault()
     const direction = event.deltaY < 0 ? PREVIEW_ZOOM_STEP : -PREVIEW_ZOOM_STEP
-    setPreviewZoom((value) => clampZoom(value + direction))
-  }, [])
+    setPreviewFitMode(false)
+    setPreviewZoomAroundCenter(previewZoom + direction)
+  }, [previewZoom, setPreviewZoomAroundCenter])
 
   const handlePreviewPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
@@ -300,10 +506,23 @@ export function MermaidRenderer({ code }: Props) {
     stopDraggingPreview()
   }, [stopDraggingPreview])
 
-  const previewCanvasStyle = svgMetrics
+  const previewFrameStyle = svgMetrics
     ? {
+        position: 'relative' as const,
         width: `${svgMetrics.width * previewZoom}px`,
         height: `${svgMetrics.height * previewZoom}px`,
+      }
+    : undefined
+  const previewCanvasStyle = svgMetrics
+    ? {
+        position: 'absolute' as const,
+        left: 0,
+        top: 0,
+        width: `${svgMetrics.width}px`,
+        height: `${svgMetrics.height}px`,
+        transform: `scale(${previewZoom})`,
+        transformOrigin: 'top left',
+        willChange: 'transform',
       }
     : undefined
 
@@ -360,11 +579,18 @@ export function MermaidRenderer({ code }: Props) {
         <div
           ref={containerRef}
           data-testid="mermaid-diagram-surface"
-          className="flex items-center justify-center overflow-auto bg-[var(--color-surface-container-lowest)] p-4 cursor-pointer"
+          className="overflow-auto bg-[var(--color-surface-container-lowest)] p-4 cursor-pointer"
           style={{ maxHeight: 400 }}
           onClick={handlePreview}
-          dangerouslySetInnerHTML={{ __html: sanitizeMermaidSvg(svg) }}
-        />
+        >
+          <div className="mx-auto shrink-0 select-none" style={inlineFrameStyle}>
+            <div
+              style={inlineCanvasStyle}
+              aria-label="Mermaid inline canvas"
+              dangerouslySetInnerHTML={{ __html: sanitizedSvg ?? '' }}
+            />
+          </div>
+        </div>
       </div>
 
       {/* Fullscreen preview modal */}
@@ -391,6 +617,14 @@ export function MermaidRenderer({ code }: Props) {
                   className="min-w-[68px] rounded-md px-2 py-1 text-[11px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
                 >
                   {Math.round(previewZoom * 100)}%
+                </button>
+                <button
+                  type="button"
+                  onClick={fitPreview}
+                  aria-label="Fit diagram"
+                  className="rounded-md px-2 py-1 text-[11px] font-semibold text-[var(--color-text-secondary)] transition-colors hover:bg-[var(--color-surface-hover)] hover:text-[var(--color-text-primary)]"
+                >
+                  Fit
                 </button>
                 <button
                   type="button"
@@ -421,18 +655,22 @@ export function MermaidRenderer({ code }: Props) {
             onPointerUp={handlePreviewPointerUp}
             onPointerCancel={handlePreviewPointerUp}
             onPointerLeave={handlePreviewPointerUp}
-          >
-            <div className="min-h-full min-w-full p-6">
-              <div
-                ref={previewContentRef}
-                className="mx-auto shrink-0 select-none"
-                style={previewCanvasStyle}
-                data-dragging={isDraggingPreview ? 'true' : 'false'}
-                aria-label="Mermaid preview canvas"
-                dangerouslySetInnerHTML={{ __html: sanitizeMermaidSvg(svg) }}
-              />
+            >
+              <div className="min-h-full min-w-full p-6">
+                <div
+                  className="mx-auto shrink-0 select-none"
+                  style={previewFrameStyle}
+                >
+                  <div
+                    ref={previewContentRef}
+                    style={previewCanvasStyle}
+                    data-dragging={isDraggingPreview ? 'true' : 'false'}
+                    aria-label="Mermaid preview canvas"
+                    dangerouslySetInnerHTML={{ __html: sanitizedSvg ?? '' }}
+                  />
+                </div>
+              </div>
             </div>
-          </div>
           <div className="text-[11px] text-[var(--color-text-tertiary)]">
             Use the zoom controls to enlarge the diagram. Drag inside the preview to pan, or use the trackpad, mouse wheel, and scrollbars. Hold Ctrl/Command while scrolling to zoom.
           </div>
