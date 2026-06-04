@@ -1306,6 +1306,7 @@ export const zh: Record<TranslationKey, string> = {
 
   // ─── Thinking Block ──────────────────────────────────────
   'thinking.label': '思考中',
+  'thinking.labelDone': '已思考',
 
   // ─── Tool Calls ──────────────────────────────────────
   'tool.errorOutput': '錯誤輸出',
@@ -1664,6 +1665,7 @@ export const zh: Record<TranslationKey, string> = {
   'tabs.closeConfirmStop': '停止並關閉',
   'tabs.closeAllConfirmTitle': '多個會話執行中',
   // ─── Slash Command Descriptions ──────────────────────────────────────
+  'slashCmd.agent.description': '使用指定 Agent 執行提示',
   'slashCmd.mcp.description': '開啟當前聊天上下文中可用的 MCP 工具',
   'slashCmd.skills.description': '瀏覽當前上下文中可直接呼叫的技能',
   'slashCmd.help.description': '檢視可用的桌面端與 Agent 命令',

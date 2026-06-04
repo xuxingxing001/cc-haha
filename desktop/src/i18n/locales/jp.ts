@@ -1306,6 +1306,7 @@ export const jp: Record<TranslationKey, string> = {
 
   // ─── Thinking Block ──────────────────────────────────────
   'thinking.label': '思考中',
+  'thinking.labelDone': '思考完了',
 
   // ─── Tool Calls ──────────────────────────────────────
   'tool.errorOutput': 'エラー出力',
@@ -1662,6 +1663,7 @@ export const jp: Record<TranslationKey, string> = {
   'tabs.closeConfirmMessage': 'このセッションはまだ実行中です。どうしますか？',
   'tabs.closeConfirmKeep': '実行を継続',
   // ─── Slash Command Descriptions ──────────────────────────────────────
+  'slashCmd.agent.description': '選択した Agent でプロンプトを実行',
   'slashCmd.mcp.description': '現在のチャットコンテキストで利用可能な MCP ツールを開く',
   'slashCmd.skills.description': '現在のチャットコンテキストでユーザーが呼び出せるスキルを閲覧',
   'slashCmd.help.description': '利用可能なデスクトップおよびエージェントのコマンドを表示',

@@ -1306,6 +1306,7 @@ export const kr: Record<TranslationKey, string> = {
 
   // ─── Thinking Block ──────────────────────────────────────
   'thinking.label': '사고 중',
+  'thinking.labelDone': '사고 완료',
 
   // ─── Tool Calls ──────────────────────────────────────
   'tool.errorOutput': '오류 출력',
@@ -1662,6 +1663,7 @@ export const kr: Record<TranslationKey, string> = {
   'tabs.closeConfirmMessage': '이 세션은 아직 실행 중입니다. 어떻게 하시겠습니까?',
   'tabs.closeConfirmKeep': '계속 실행',
   // ─── Slash Command Descriptions ──────────────────────────────────────
+  'slashCmd.agent.description': '선택한 Agent로 프롬프트 실행',
   'slashCmd.mcp.description': '현재 채팅 컨텍스트에서 사용 가능한 MCP 도구 열기',
   'slashCmd.skills.description': '현재 채팅 컨텍스트에서 사용자가 호출할 수 있는 스킬 살펴보기',
   'slashCmd.help.description': '사용 가능한 데스크톱 및 에이전트 명령 표시',
